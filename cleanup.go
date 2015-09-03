@@ -29,6 +29,8 @@ var revision string = "dev"
 
 var internalImages = []string{
 	"gitlab/gitlab-runner:*",
+	"quay.io/gitlab-runner:*",
+	"quay.io/gitlab-runner-*:*",
 }
 
 var diskSpaceImage = "alpine"
