@@ -1,5 +1,5 @@
 REVISION := $(shell git rev-parse --short HEAD || echo unknown)
-VERSION := $(shell git describe --tags || cat VERSION || echo dev)
+VERSION := $(shell git describe --tags || echo dev)
 VERSION := $(shell echo $(VERSION) | sed -e 's/^v//g')
 
 all:
