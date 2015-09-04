@@ -266,7 +266,7 @@ func handleDockerContainer(client DockerClient, container *docker.Container) {
 func handleDockerContainerID(client DockerClient, containerID string) {
 	container, err := client.InspectContainer(containerID)
 	if err != nil {
-		logrus.Warningln("Failed to inspect container", containerID, container.Name, err)
+		logrus.Warningln("Failed to inspect container", containerID, err)
 		return
 	}
 	handleDockerContainer(client, container)
