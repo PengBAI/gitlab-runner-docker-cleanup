@@ -438,6 +438,9 @@ func doCycle(client DockerClient, lowFreeSpace, freeSpace uint64) error {
 		"trying to free to:", humanize.Bytes(freeSpace))
 
 	freeSpaceErr := doFreeSpace(client, freeSpace)
+	if freeSpaceErr != nil {
+		logrus.Warningln("Failed to free disk space:", freeSpaceErr)
+	}
 
 	currentDiskSpace, _, err := client.DiskSpace(opts.MonitorPath)
 	if err == nil {
@@ -473,10 +476,8 @@ func runCleanupTool(c *cli.Context) {
 
 		err = doCycle(&customClient, lowFreeSpace, expectedFreeSpace)
 		if err == nil {
-			logrus.Infoln("Checking disk space...")
 			time.Sleep(opts.CheckInterval)
 		} else {
-			logrus.Warningln("Failed to free disk space:", err)
 			time.Sleep(opts.RetryInterval)
 		}
 	}
