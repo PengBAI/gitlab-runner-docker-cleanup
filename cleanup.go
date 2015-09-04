@@ -431,10 +431,12 @@ func doCycle(client DockerClient, lowFreeSpace, freeSpace uint64) error {
 		return err
 	}
 	if diskSpace >= lowFreeSpace {
+		logrus.Infoln("Nothing to free. Current disk space", humanize.Bytes(diskSpace),
+			"is above the lower bound", humanize.Bytes(lowFreeSpace))
 		return nil
 	}
 
-	logrus.Infoln("Freeing disk space. The disk space is below:", humanize.Bytes(diskSpace),
+	logrus.Warningln("Freeing disk space. The disk space is below:", humanize.Bytes(diskSpace),
 		"trying to free to:", humanize.Bytes(freeSpace))
 
 	freeSpaceErr := doFreeSpace(client, freeSpace)
