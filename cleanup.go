@@ -114,6 +114,7 @@ func (c *CustomDockerClient) diskSpaceLocally(path string) (uint64, uint64, erro
 func (c *CustomDockerClient) diskSpaceRemotely(path string) (uint64, uint64, error) {
 	_, err := c.InspectImage(diskSpaceImage)
 	if err != nil {
+		logrus.Debugln("Pulling", diskSpaceImage, "...")
 		err := c.PullImage(docker.PullImageOptions{
 			Repository: diskSpaceImage,
 		}, docker.AuthConfiguration{})
@@ -424,7 +425,6 @@ func doCycle(client DockerClient, lowFreeSpace, freeSpace uint64) error {
 		return err
 	}
 
-	logrus.Infoln("Checking disk space...")
 	diskSpace, _, err := client.DiskSpace(opts.MonitorPath)
 	if err != nil {
 		logrus.Warningln("Failed to verify disk space:", err)
