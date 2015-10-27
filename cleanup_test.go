@@ -22,6 +22,10 @@ type MockDockerClient struct {
 	totalSpace        uint64
 }
 
+func (c *MockDockerClient) Ping() error {
+	return c.error
+}
+
 func (c *MockDockerClient) RemoveImage(name string) error {
 	if c.error != nil {
 		return c.error

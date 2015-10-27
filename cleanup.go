@@ -54,6 +54,7 @@ var opts = struct {
 }
 
 type DockerClient interface {
+	Ping() error
 	ListImages(opts docker.ListImagesOptions) ([]docker.APIImages, error)
 	ListContainers(opts docker.ListContainersOptions) ([]docker.APIContainers, error)
 	RemoveImage(name string) error
@@ -463,20 +464,26 @@ func runCleanupTool(c *cli.Context) {
 		logrus.Fatalln(err)
 	}
 
+	var dockerClient DockerClient
+
 	logrus.Infoln("Watching disk space...")
 	for {
-		client, err := docker_helpers.Connect(dockerCredentials, dockerAPIVersion)
-		if err != nil {
-			logrus.Warningln("Failed to connect to daemon:", err)
-			time.Sleep(opts.RetryInterval)
-			continue
+		if dockerClient == nil || dockerClient.Ping() != nil {
+			dockerClient = nil
+
+			client, err := docker_helpers.Connect(dockerCredentials, dockerAPIVersion)
+			if err != nil {
+				logrus.Warningln("Failed to connect to daemon:", err)
+				time.Sleep(opts.RetryInterval)
+				continue
+			}
+
+			dockerClient = &CustomDockerClient{
+				Client: client,
+			}
 		}
 
-		customClient := CustomDockerClient{
-			Client: client,
-		}
-
-		err = doCycle(&customClient, lowFreeSpace, expectedFreeSpace)
+		err = doCycle(dockerClient, lowFreeSpace, expectedFreeSpace)
 		if err == nil {
 			time.Sleep(opts.CheckInterval)
 		} else {
