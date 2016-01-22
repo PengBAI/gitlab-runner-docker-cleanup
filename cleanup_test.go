@@ -3,10 +3,10 @@ package main
 import (
 	"fmt"
 	"github.com/Sirupsen/logrus"
+	"github.com/dustin/go-humanize"
 	. "github.com/fsouza/go-dockerclient"
 	. "gopkg.in/check.v1"
 	"testing"
-	"github.com/dustin/go-humanize"
 	"time"
 )
 
@@ -68,10 +68,10 @@ func (c *MockDockerClient) InspectContainer(id string) (*Container, error) {
 	for idx, container := range c.containers {
 		if container.ID == id {
 			data := &Container{
-				ID:    id,
-				Name:  id,
-				Image: container.Image,
-				HostConfig: &HostConfig{},
+				ID:              id,
+				Name:            id,
+				Image:           container.Image,
+				HostConfig:      &HostConfig{},
 				Config:          &Config{},
 				NetworkSettings: &NetworkSettings{},
 			}
@@ -119,8 +119,8 @@ func makeDockerImageWithSize(name string, size uint64) APIImages {
 		RepoTags: []string{
 			name,
 		},
-		ParentID: "",
-		Size: int64(size),
+		ParentID:    "",
+		Size:        int64(size),
 		VirtualSize: int64(size),
 	}
 }
@@ -139,10 +139,10 @@ func makeDockerContainer(name string, image string) APIContainers {
 
 func makeDockerContainerWithSize(name string, image string, size uint64) APIContainers {
 	return APIContainers{
-		ID:    name,
-		Image: image,
-		Names: []string{name},
-		SizeRw: int64(size),
+		ID:         name,
+		Image:      image,
+		Names:      []string{name},
+		SizeRw:     int64(size),
 		SizeRootFs: int64(size),
 	}
 }
@@ -371,14 +371,14 @@ func (s *CleanupSuite) TestCycleUnableToCleanup(c *C) {
 func (s *CleanupSuite) TestFreeingSpaceAndNotRemovingContainersWithInternalImages(c *C) {
 	s.dockerClient.freeSpace = humanize.GByte
 	s.dockerClient.images = []APIImages{
-		makeDockerImageWithSize("test", 600 * humanize.MByte),
-		makeDockerImageWithSize("gitlab/gitlab-runner:test", 500 * humanize.MByte),
+		makeDockerImageWithSize("test", 600*humanize.MByte),
+		makeDockerImageWithSize("gitlab/gitlab-runner:test", 500*humanize.MByte),
 	}
 
 	err := updateImages(s.dockerClient)
 	c.Assert(err, IsNil)
 
-	err = doFreeSpace(s.dockerClient, 2 * humanize.GByte)
+	err = doFreeSpace(s.dockerClient, 2*humanize.GByte)
 	c.Assert(err, NotNil)
 	c.Assert(s.dockerClient.removedImages, HasLen, 1)
 }
@@ -386,14 +386,14 @@ func (s *CleanupSuite) TestFreeingSpaceAndNotRemovingContainersWithInternalImage
 func (s *CleanupSuite) TestFreeingSpaceByRemovingImages(c *C) {
 	s.dockerClient.freeSpace = humanize.GByte
 	s.dockerClient.images = []APIImages{
-		makeDockerImageWithSize("test", 600 * humanize.MByte),
-		makeDockerImageWithSize("test2", 500 * humanize.MByte),
+		makeDockerImageWithSize("test", 600*humanize.MByte),
+		makeDockerImageWithSize("test2", 500*humanize.MByte),
 	}
 
 	err := updateImages(s.dockerClient)
 	c.Assert(err, IsNil)
 
-	err = doFreeSpace(s.dockerClient, 2 * humanize.GByte)
+	err = doFreeSpace(s.dockerClient, 2*humanize.GByte)
 	c.Assert(err, IsNil)
 	c.Assert(s.dockerClient.removedImages, HasLen, 2)
 }
@@ -401,14 +401,14 @@ func (s *CleanupSuite) TestFreeingSpaceByRemovingImages(c *C) {
 func (s *CleanupSuite) TestFreeingSpaceByRemovingCaches(c *C) {
 	s.dockerClient.freeSpace = humanize.GByte
 	s.dockerClient.containers = []APIContainers{
-		makeDockerCache("1", 600 * humanize.MByte),
-		makeDockerCache("2", 500 * humanize.MByte),
+		makeDockerCache("1", 600*humanize.MByte),
+		makeDockerCache("2", 500*humanize.MByte),
 	}
 
 	err := updateContainers(s.dockerClient)
 	c.Assert(err, IsNil)
 
-	err = doFreeSpace(s.dockerClient, 2 * humanize.GByte)
+	err = doFreeSpace(s.dockerClient, 2*humanize.GByte)
 	c.Assert(err, IsNil)
 	c.Assert(s.dockerClient.removedContainers, HasLen, 2)
 }
@@ -416,14 +416,14 @@ func (s *CleanupSuite) TestFreeingSpaceByRemovingCaches(c *C) {
 func (s *CleanupSuite) TestFreeingSpaceAndIgnoringNonCacheContainers(c *C) {
 	s.dockerClient.freeSpace = humanize.GByte
 	s.dockerClient.containers = []APIContainers{
-		makeDockerCache("1", 600 * humanize.MByte),
+		makeDockerCache("1", 600*humanize.MByte),
 		makeDockerContainer("test", "image"),
 	}
 
 	err := updateContainers(s.dockerClient)
 	c.Assert(err, IsNil)
 
-	err = doFreeSpace(s.dockerClient, 2 * humanize.GByte)
+	err = doFreeSpace(s.dockerClient, 2*humanize.GByte)
 	c.Assert(err, NotNil)
 	c.Assert(s.dockerClient.removedContainers, HasLen, 1)
 }

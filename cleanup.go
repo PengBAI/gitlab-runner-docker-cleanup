@@ -447,7 +447,7 @@ func doCycle(client DockerClient, lowFreeSpace, freeSpace uint64) error {
 
 	currentDiskSpace, _, err := client.DiskSpace(opts.MonitorPath)
 	if err == nil {
-		logrus.Infoln("Freed:", humanize.Bytes(currentDiskSpace - diskSpace))
+		logrus.Infoln("Freed:", humanize.Bytes(currentDiskSpace-diskSpace))
 	}
 
 	return freeSpaceErr
