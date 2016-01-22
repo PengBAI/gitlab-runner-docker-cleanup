@@ -20,6 +20,8 @@ type MockDockerClient struct {
 	links             []string
 	freeSpace         uint64
 	totalSpace        uint64
+	freeFiles         uint64
+	totalFiles        uint64
 }
 
 func (c *MockDockerClient) Ping() error {
@@ -32,7 +34,8 @@ func (c *MockDockerClient) RemoveImage(name string) error {
 	}
 	for _, image := range c.images {
 		if image.ID == name {
-			c.freeSpace -= uint64(image.Size)
+			c.freeSpace += uint64(image.Size)
+			c.freeFiles += uint64(image.Size / 4096)
 		}
 	}
 	c.removedImages = append(c.removedImages, name)
@@ -45,7 +48,8 @@ func (c *MockDockerClient) RemoveContainer(opts RemoveContainerOptions) error {
 	}
 	for _, container := range c.containers {
 		if container.ID == opts.ID {
-			c.freeSpace -= uint64(container.SizeRw)
+			c.freeSpace += uint64(container.SizeRw)
+			c.freeFiles += uint64(container.SizeRw / 4096)
 		}
 	}
 	c.removedContainers = append(c.removedContainers, opts.ID)
@@ -60,8 +64,13 @@ func (c *MockDockerClient) ListContainers(opts ListContainersOptions) ([]APICont
 	return c.containers, c.error
 }
 
-func (c *MockDockerClient) DiskSpace(path string) (uint64, uint64, error) {
-	return c.freeSpace, c.totalSpace, c.error
+func (c *MockDockerClient) DiskSpace(path string) (DiskSpace, error) {
+	return DiskSpace{
+		BytesFree:  c.freeSpace,
+		BytesTotal: c.totalSpace,
+		FilesFree:  c.freeFiles,
+		FilesTotal: c.totalFiles,
+	}, c.error
 }
 
 func (c *MockDockerClient) InspectContainer(id string) (*Container, error) {
@@ -357,13 +366,14 @@ func (s *CleanupSuite) TestMarksImage(c *C) {
 
 func (s *CleanupSuite) TestCycleWithEnoughDiskSpace(c *C) {
 	s.dockerClient.freeSpace = humanize.GByte
-	err := doCycle(s.dockerClient, humanize.MByte, humanize.GByte)
+	s.dockerClient.freeFiles = 100000
+	err := doCycle(s.dockerClient, humanize.MByte, humanize.GByte, 1000, 10000)
 	c.Assert(err, IsNil)
 }
 
 func (s *CleanupSuite) TestCycleUnableToCleanup(c *C) {
 	s.dockerClient.freeSpace = humanize.KByte
-	err := doCycle(s.dockerClient, humanize.MByte, humanize.GByte)
+	err := doCycle(s.dockerClient, humanize.MByte, humanize.GByte, 1000, 10000)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "no images or caches to delete")
 }
@@ -378,7 +388,7 @@ func (s *CleanupSuite) TestFreeingSpaceAndNotRemovingContainersWithInternalImage
 	err := updateImages(s.dockerClient)
 	c.Assert(err, IsNil)
 
-	err = doFreeSpace(s.dockerClient, 2*humanize.GByte)
+	err = doFreeSpace(s.dockerClient, 2*humanize.GByte, 100000)
 	c.Assert(err, NotNil)
 	c.Assert(s.dockerClient.removedImages, HasLen, 1)
 }
@@ -393,9 +403,24 @@ func (s *CleanupSuite) TestFreeingSpaceByRemovingImages(c *C) {
 	err := updateImages(s.dockerClient)
 	c.Assert(err, IsNil)
 
-	err = doFreeSpace(s.dockerClient, 2*humanize.GByte)
+	err = doFreeSpace(s.dockerClient, 2*humanize.GByte, 100000)
 	c.Assert(err, IsNil)
 	c.Assert(s.dockerClient.removedImages, HasLen, 2)
+}
+
+func (s *CleanupSuite) TestFreeingFilesByRemovingImages(c *C) {
+	s.dockerClient.images = []APIImages{
+		makeDockerImageWithSize("test", 40*humanize.MByte),
+	}
+	s.dockerClient.freeSpace = humanize.TByte
+	s.dockerClient.freeFiles = 500
+
+	err := updateImages(s.dockerClient)
+	c.Assert(err, IsNil)
+
+	err = doCycle(s.dockerClient, humanize.MByte, humanize.GByte, 1000, 10000)
+	c.Assert(err, IsNil)
+	c.Assert(s.dockerClient.removedImages, HasLen, 1)
 }
 
 func (s *CleanupSuite) TestFreeingSpaceByRemovingCaches(c *C) {
@@ -408,7 +433,7 @@ func (s *CleanupSuite) TestFreeingSpaceByRemovingCaches(c *C) {
 	err := updateContainers(s.dockerClient)
 	c.Assert(err, IsNil)
 
-	err = doFreeSpace(s.dockerClient, 2*humanize.GByte)
+	err = doFreeSpace(s.dockerClient, 2*humanize.GByte, 100000)
 	c.Assert(err, IsNil)
 	c.Assert(s.dockerClient.removedContainers, HasLen, 2)
 }
@@ -423,7 +448,7 @@ func (s *CleanupSuite) TestFreeingSpaceAndIgnoringNonCacheContainers(c *C) {
 	err := updateContainers(s.dockerClient)
 	c.Assert(err, IsNil)
 
-	err = doFreeSpace(s.dockerClient, 2*humanize.GByte)
+	err = doFreeSpace(s.dockerClient, 2*humanize.GByte, 100000)
 	c.Assert(err, NotNil)
 	c.Assert(s.dockerClient.removedContainers, HasLen, 1)
 }

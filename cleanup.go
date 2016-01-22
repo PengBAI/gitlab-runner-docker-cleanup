@@ -36,21 +36,30 @@ var internalImages = []string{
 var diskSpaceImage = "alpine"
 
 var opts = struct {
-	MonitorPath       string        `long:"check-path" description:"Path to monitor when verifying disk space" env:"CHECK_PATH"`
-	LowFreeSpace      string        `long:"low-free-space" description:"When to trigger cleanup cycle" env:"LOW_FREE_SPACE"`
-	ExpectedFreeSpace string        `long:"expected-free-space" description:"How much free space to cleanup" env:"EXPECTED_FREE_SPACE"`
-	UseDf             bool          `long:"use-df" description:"Use 'df' to check disk space instead of docker container" env:"USE_DF"`
-	CheckInterval     time.Duration `long:"check-interval" description:"How often to check disk space?" env:"CHECK_INTERVAL"`
-	RetryInterval     time.Duration `long:"retry-interval" description:"How long to wait before trying again?" env:"RETRY_INTERVAL"`
-	DefaultTTL        time.Duration `long:"ttl" description:"Default minimum TTL for caches and images" env:"DEFAULT_TTL"`
+	MonitorPath            string        `long:"check-path" description:"Path to monitor when verifying disk space" env:"CHECK_PATH"`
+	LowFreeSpace           string        `long:"low-free-space" description:"When to trigger cleanup cycle" env:"LOW_FREE_SPACE"`
+	ExpectedFreeSpace      string        `long:"expected-free-space" description:"How much free space to cleanup" env:"EXPECTED_FREE_SPACE"`
+	LowFreeFilesCount      uint64        `long:"low-files-count" description:"Trigger cleanup cycle if number of i-nodes runs below this value" env:"LOW_FREE_FILES_COUNT"`
+	ExpectedFreeFilesCount uint64        `long:"expected-files-count" description:"How much free i-nodes to recycle" env:"EXPECTED_FREE_FILES_COUNT"`
+	UseDf                  bool          `long:"use-df" description:"Use 'df' to check disk space instead of docker container" env:"USE_DF"`
+	CheckInterval          time.Duration `long:"check-interval" description:"How often to check disk space?" env:"CHECK_INTERVAL"`
+	RetryInterval          time.Duration `long:"retry-interval" description:"How long to wait before trying again?" env:"RETRY_INTERVAL"`
+	DefaultTTL             time.Duration `long:"ttl" description:"Default minimum TTL for caches and images" env:"DEFAULT_TTL"`
 }{
 	"/",
 	"1GB",
 	"2GB",
+	128 * 1024,
+	256 * 1024,
 	false,
 	10 * time.Second,
 	30 * time.Second,
 	1 * time.Minute,
+}
+
+type DiskSpace struct {
+	BytesFree, BytesTotal uint64
+	FilesFree, FilesTotal uint64
 }
 
 type DockerClient interface {
@@ -60,7 +69,7 @@ type DockerClient interface {
 	RemoveImage(name string) error
 	RemoveContainer(opts docker.RemoveContainerOptions) error
 	InspectContainer(id string) (*docker.Container, error)
-	DiskSpace(path string) (uint64, uint64, error)
+	DiskSpace(path string) (DiskSpace, error)
 }
 
 type CustomDockerClient struct {
@@ -103,24 +112,29 @@ var dockerCredentials docker_helpers.DockerCredentials
 var imagesUsed map[string]ImageInfo = make(map[string]ImageInfo)
 var cachesUsed map[string]CacheInfo = make(map[string]CacheInfo)
 
-func (c *CustomDockerClient) diskSpaceLocally(path string) (uint64, uint64, error) {
+func (c *CustomDockerClient) diskSpaceLocally(path string) (ds DiskSpace, err error) {
 	var stat syscall.Statfs_t
-	err := syscall.Statfs(path, &stat)
-	if err != nil {
-		return 0, 0, err
+	err = syscall.Statfs(path, &stat)
+	if err == nil {
+		ds = DiskSpace{
+			BytesFree:  stat.Bavail * uint64(stat.Bsize),
+			BytesTotal: stat.Blocks * uint64(stat.Bsize),
+			FilesFree:  stat.Ffree,
+			FilesTotal: stat.Files,
+		}
 	}
-	return stat.Bavail * uint64(stat.Bsize), stat.Blocks * uint64(stat.Bsize), nil
+	return
 }
 
-func (c *CustomDockerClient) diskSpaceRemotely(path string) (uint64, uint64, error) {
-	_, err := c.InspectImage(diskSpaceImage)
+func (c *CustomDockerClient) diskSpaceRemotely(path string) (ds DiskSpace, err error) {
+	_, err = c.InspectImage(diskSpaceImage)
 	if err != nil {
 		logrus.Debugln("Pulling", diskSpaceImage, "...")
-		err := c.PullImage(docker.PullImageOptions{
+		err = c.PullImage(docker.PullImageOptions{
 			Repository: diskSpaceImage,
 		}, docker.AuthConfiguration{})
 		if err != nil {
-			return 0, 0, err
+			return
 		}
 	}
 
@@ -129,12 +143,12 @@ func (c *CustomDockerClient) diskSpaceRemotely(path string) (uint64, uint64, err
 		Config: &docker.Config{
 			Image:        diskSpaceImage,
 			Entrypoint:   []string{"/bin/stat"},
-			Cmd:          []string{"-f", "-c%a %b %s", path},
+			Cmd:          []string{"-f", "-c%a %b %s %d %c", path},
 			AttachStdout: true,
 		},
 	})
 	if err != nil {
-		return 0, 0, err
+		return
 	}
 
 	defer c.RemoveContainer(docker.RemoveContainerOptions{
@@ -144,12 +158,12 @@ func (c *CustomDockerClient) diskSpaceRemotely(path string) (uint64, uint64, err
 
 	err = c.StartContainer(container.ID, nil)
 	if err != nil {
-		return 0, 0, err
+		return
 	}
 
 	errorCode, err := c.WaitContainer(container.ID)
 	if err != nil || errorCode != 0 {
-		return 0, 0, err
+		return
 	}
 
 	var buffer bytes.Buffer
@@ -160,19 +174,25 @@ func (c *CustomDockerClient) diskSpaceRemotely(path string) (uint64, uint64, err
 		Tail:         "1",
 	})
 	if err != nil {
-		return 0, 0, err
+		return
 	}
 
-	var freeBlocks, totalBlocks, blockSize uint64
-	_, err = fmt.Fscanln(&buffer, &freeBlocks, &totalBlocks, &blockSize)
+	var freeBlocks, totalBlocks, blockSize, freeFiles, totalFiles uint64
+	_, err = fmt.Fscanln(&buffer, &freeBlocks, &totalBlocks, &blockSize, &freeFiles, &totalFiles)
 	if err != nil {
-		return 0, 0, err
+		return
 	}
 
-	return uint64(freeBlocks * blockSize), uint64(totalBlocks * blockSize), nil
+	ds = DiskSpace{
+		BytesFree:  uint64(freeBlocks * blockSize),
+		BytesTotal: uint64(totalBlocks * blockSize),
+		FilesFree:  freeFiles,
+		FilesTotal: totalFiles,
+	}
+	return
 }
 
-func (c *CustomDockerClient) DiskSpace(path string) (uint64, uint64, error) {
+func (c *CustomDockerClient) DiskSpace(path string) (DiskSpace, error) {
 	if opts.UseDf {
 		return c.diskSpaceLocally(path)
 	} else {
@@ -340,7 +360,7 @@ func updateContainers(client DockerClient) error {
 	return nil
 }
 
-func doFreeSpace(client DockerClient, freeSpace uint64) error {
+func doFreeSpace(client DockerClient, freeSpace, freeFiles uint64) error {
 	images, err := client.ListImages(docker.ListImagesOptions{})
 	if err != nil {
 		logrus.Warningln("Failed to list images:", err)
@@ -357,11 +377,11 @@ func doFreeSpace(client DockerClient, freeSpace uint64) error {
 
 	var lastError error
 	for {
-		diskSpace, _, err := client.DiskSpace(opts.MonitorPath)
+		diskSpace, err := client.DiskSpace(opts.MonitorPath)
 		if err != nil {
 			return err
 		}
-		if diskSpace > freeSpace {
+		if diskSpace.BytesFree > freeSpace && diskSpace.FilesFree > freeFiles {
 			break
 		}
 
@@ -413,7 +433,7 @@ func doFreeSpace(client DockerClient, freeSpace uint64) error {
 	return lastError
 }
 
-func doCycle(client DockerClient, lowFreeSpace, freeSpace uint64) error {
+func doCycle(client DockerClient, lowFreeSpace, freeSpace, lowFreeFiles, freeFiles uint64) error {
 	err := updateImages(client)
 	if err != nil {
 		logrus.Warningln("Failed to update images:", err)
@@ -426,28 +446,42 @@ func doCycle(client DockerClient, lowFreeSpace, freeSpace uint64) error {
 		return err
 	}
 
-	diskSpace, _, err := client.DiskSpace(opts.MonitorPath)
+	diskSpace, err := client.DiskSpace(opts.MonitorPath)
 	if err != nil {
 		logrus.Warningln("Failed to verify disk space:", err)
 		return err
 	}
-	if diskSpace >= lowFreeSpace {
-		logrus.Debugln("Nothing to free. Current disk space", humanize.Bytes(diskSpace),
-			"is above the lower bound", humanize.Bytes(lowFreeSpace))
+	if diskSpace.BytesFree >= lowFreeSpace && diskSpace.FilesFree >= lowFreeFiles {
+		if diskSpace.BytesFree >= lowFreeSpace {
+			logrus.Debugln("Nothing to free. Current free disk space", humanize.Bytes(diskSpace.BytesFree),
+				"is above the lower bound", humanize.Bytes(lowFreeSpace))
+		}
+		if diskSpace.FilesFree >= lowFreeFiles {
+			logrus.Debugln("Nothing to free. Current free files count", diskSpace.FilesFree,
+				"is above the lower bound", lowFreeFiles)
+		}
 		return nil
 	}
 
-	logrus.Warningln("Freeing disk space. The disk space is below:", humanize.Bytes(diskSpace),
-		"trying to free to:", humanize.Bytes(freeSpace))
+	if diskSpace.BytesFree < lowFreeSpace {
+		logrus.Warningln("Freeing disk space. The disk space is below the lower bound:", humanize.Bytes(diskSpace.BytesFree),
+			"trying to free up to:", humanize.Bytes(freeSpace))
+	}
+	if diskSpace.FilesFree < lowFreeSpace {
+		logrus.Warningln("Freeing files count. The free file count is below the lower bound:", diskSpace.FilesFree,
+			"trying to free up to:", freeFiles)
+	}
 
-	freeSpaceErr := doFreeSpace(client, freeSpace)
+	freeSpaceErr := doFreeSpace(client, freeSpace, freeFiles)
 	if freeSpaceErr != nil {
 		logrus.Warningln("Failed to free disk space:", freeSpaceErr)
 	}
 
-	currentDiskSpace, _, err := client.DiskSpace(opts.MonitorPath)
+	currentDiskSpace, err := client.DiskSpace(opts.MonitorPath)
 	if err == nil {
-		logrus.Infoln("Freed:", humanize.Bytes(currentDiskSpace-diskSpace))
+		logrus.Infoln("Freed",
+			"bytes:", humanize.Bytes(currentDiskSpace.BytesFree-diskSpace.BytesFree),
+			"files:", currentDiskSpace.FilesFree-diskSpace.FilesFree)
 	}
 
 	return freeSpaceErr
@@ -483,7 +517,7 @@ func runCleanupTool(c *cli.Context) {
 			}
 		}
 
-		err = doCycle(dockerClient, lowFreeSpace, expectedFreeSpace)
+		err = doCycle(dockerClient, lowFreeSpace, expectedFreeSpace, opts.LowFreeFilesCount, opts.ExpectedFreeFilesCount)
 		if err == nil {
 			time.Sleep(opts.CheckInterval)
 		} else {
