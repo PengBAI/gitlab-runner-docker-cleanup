@@ -16,6 +16,7 @@ docker run -d \
     -e EXPECTED_FREE_FILES_COUNT=2097152 \
     -e DEFAULT_TTL=10m \
     -e USE_DF=1 \
+    --restart always \
     -v /var/run/docker.sock:/var/run/docker.sock \
     --name=gitlab-runner-docker-cleanup \
     quay.io/gitlab/gitlab-runner-docker-cleanup
