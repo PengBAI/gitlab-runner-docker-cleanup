@@ -1,8 +1,8 @@
 ## GitLab Runner Docker Cleanup
 
-Project forked from [gitlab-org/gitlab-runner-docker-cleanup](https://gitlab.com/gitlab-org/gitlab-runner-docker-cleanup).
+Project forked from [gitlab-org/gitlab-runner-docker-cleanup](https://gitlab.com/gitlab-org/gitlab-runner-docker-cleanup). Thanks to the original project owner.
 
-This is simple docker application that automatically garbage collects the GitLab Runner Caches and Images when running on low disk space. 
+This is simple docker application that automatically garbage collects the GitLab Runner Caches and Images when running on low disk space. Same require features are implemented in this project.
 
 ### New features:
 
@@ -29,18 +29,16 @@ docker run -d \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v /etc/gitlab_runner_docker_cleanup_internal_images:/etc/gitlab_runner_docker_cleanup_internal_images \
     --name=gitlab-runner-docker-cleanup \
-    registry-testing.kazan.atosworldline.com/kazan/awl-gitlab-runner-docker-cleanup:latest
+    pengbai/gitlab-runner-docker-cleanup
 ```
 
 example of /etc/gitlab_runner_docker_cleanup_internal_images
 
 ```
 $ cat /etc/gitlab_runner_docker_cleanup_internal_images
-registry-testing.kazan.atosworldline.com/kazan/awl-kazan-builder:*
-registry.kazan.atosworldline.com/docker-reg/awl-transparent-proxy:latest
-registry-testing.kazan.atosworldline.com/kazan/awl-docker-builder-cli:*
-registry.kazan.atosworldline.com/kazan/awl-docker-builder-cli:*
+golang:l.8.4
 tutum/curl:alpine
+alpine:*
 ```
 
 The above command will ensure to always have at least `10GB` of free disk space and at least `1M` of free files (i-nodes) on disk.
