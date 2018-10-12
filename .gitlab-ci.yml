@@ -1,7 +1,13 @@
-image: golang:1.4
+stages:
+  - test
+  - dockerize
 
 test:
+  image: golang:1.9.4
+  stage: test
   script:
-  - go-wrapper download
-  - go-wrapper download gopkg.in/check.v1
-  - go -cover test
+  - go get -v -d
+  - go get -v -d gopkg.in/check.v1
+  - go test
+  only:
+    - web

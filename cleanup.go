@@ -1,16 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/Sirupsen/logrus"
-	"github.com/codegangsta/cli"
 	"github.com/dustin/go-humanize"
 	"github.com/fsouza/go-dockerclient"
+	"github.com/sirupsen/logrus"
+	"github.com/urfave/cli"
 	"gitlab.com/ayufan/golang-cli-helpers"
-	"gitlab.com/gitlab-org/gitlab-ci-multi-runner/helpers/cli"
-	"gitlab.com/gitlab-org/gitlab-ci-multi-runner/helpers/docker"
+	"gitlab.com/gitlab-org/gitlab-runner/helpers/docker"
 	"os"
 	"path"
 	"path/filepath"
@@ -19,42 +19,45 @@ import (
 	"time"
 )
 
-const dockerAPIVersion = "1.18"
 const objectPastTimeDivisor = time.Second
 const danglingImageBonus = 1000
 const spaceAllFree uint64 = ^uint64(0)
+const dockerClientEndpoint = "unix:///var/run/docker.sock"
 
 var version string = "dev"
 var revision string = "dev"
 
-var internalImages = []string{
+var initInternalImages = []string{
 	"gitlab/gitlab-runner:*",
 	"quay.io/gitlab-runner:*",
 	"quay.io/gitlab-runner-*:*",
+	"gitlab/gitlab-runner-helper:*",
 }
 
 var diskSpaceImage = "alpine"
 
 var opts = struct {
-	MonitorPath            string        `long:"check-path" description:"Path to monitor when verifying disk space" env:"CHECK_PATH"`
-	LowFreeSpace           string        `long:"low-free-space" description:"When to trigger cleanup cycle" env:"LOW_FREE_SPACE"`
-	ExpectedFreeSpace      string        `long:"expected-free-space" description:"How much free space to cleanup" env:"EXPECTED_FREE_SPACE"`
-	LowFreeFilesCount      uint64        `long:"low-files-count" description:"Trigger cleanup cycle if number of i-nodes runs below this value" env:"LOW_FREE_FILES_COUNT"`
-	ExpectedFreeFilesCount uint64        `long:"expected-files-count" description:"How much free i-nodes to recycle" env:"EXPECTED_FREE_FILES_COUNT"`
-	UseDf                  bool          `long:"use-df" description:"Use 'df' to check disk space instead of docker container" env:"USE_DF"`
-	CheckInterval          time.Duration `long:"check-interval" description:"How often to check disk space?" env:"CHECK_INTERVAL"`
-	RetryInterval          time.Duration `long:"retry-interval" description:"How long to wait before trying again?" env:"RETRY_INTERVAL"`
-	DefaultTTL             time.Duration `long:"ttl" description:"Default minimum TTL for caches and images" env:"DEFAULT_TTL"`
+	MonitorPath                      string        `long:"check-path" description:"Path to monitor when verifying disk space" env:"CHECK_PATH"`
+	LowFreeSpace                     string        `long:"low-free-space" description:"When to trigger cleanup cycle" env:"LOW_FREE_SPACE"`
+	ExpectedFreeSpace                string        `long:"expected-free-space" description:"How much free space to cleanup" env:"EXPECTED_FREE_SPACE"`
+	LowFreeFilesCount                uint64        `long:"low-files-count" description:"Trigger cleanup cycle if number of i-nodes runs below this value" env:"LOW_FREE_FILES_COUNT"`
+	ExpectedFreeFilesCount           uint64        `long:"expected-files-count" description:"How much free i-nodes to recycle" env:"EXPECTED_FREE_FILES_COUNT"`
+	UseDf                            bool          `long:"use-df" description:"Use 'df' to check disk space instead of docker container" env:"USE_DF"`
+	CheckInterval                    time.Duration `long:"check-interval" description:"How often to check disk space?" env:"CHECK_INTERVAL"`
+	RetryInterval                    time.Duration `long:"retry-interval" description:"How long to wait before trying again?" env:"RETRY_INTERVAL"`
+	DefaultTTL                       time.Duration `long:"ttl" description:"Default minimum TTL for caches and images" env:"DEFAULT_TTL"`
+	AdditionalInternalImagesFilePath string        `long:"additional-internal-images-file-path" description:"User defined images not to remove" env:"ADDITIONAL_INTERNAL_IMAGES_FILE_PATH"`
 }{
 	"/",
 	"1GB",
 	"2GB",
 	128 * 1024,
 	256 * 1024,
-	false,
+	true,
 	10 * time.Second,
 	30 * time.Second,
 	1 * time.Minute,
+	"/etc/gitlab_runner_docker_cleanup_internal_images",
 }
 
 type DiskSpace struct {
@@ -66,7 +69,7 @@ type DockerClient interface {
 	Ping() error
 	ListImages(opts docker.ListImagesOptions) ([]docker.APIImages, error)
 	ListContainers(opts docker.ListContainersOptions) ([]docker.APIContainers, error)
-	RemoveImage(name string) error
+	RemoveImageExtended(name string, opts docker.RemoveImageOptions) error
 	RemoveContainer(opts docker.RemoveContainerOptions) error
 	InspectContainer(id string) (*docker.Container, error)
 	DiskSpace(path string) (DiskSpace, error)
@@ -201,8 +204,9 @@ func (c *CustomDockerClient) DiskSpace(path string) (DiskSpace, error) {
 }
 
 func isInternalImage(image docker.APIImages) bool {
+	totalInternalImages := buildInternalImagesList(opts.AdditionalInternalImagesFilePath)
 	for _, tag := range image.RepoTags {
-		for _, internalImage := range internalImages {
+		for _, internalImage := range totalInternalImages {
 			if matched, _ := filepath.Match(internalImage, tag); matched {
 				return true
 			}
@@ -211,8 +215,25 @@ func isInternalImage(image docker.APIImages) bool {
 	return false
 }
 
+func buildInternalImagesList(path string) []string {
+	file, err := os.Open(path)
+	if err != nil {
+		defer file.Close()
+		logrus.Infoln("No more additional internal images defined.")
+	} else {
+		defer file.Close()
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			initInternalImages = append(initInternalImages, scanner.Text())
+		}
+	}
+	return initInternalImages
+}
+
 func removeImage(client DockerClient, image docker.APIImages) error {
-	err := client.RemoveImage(image.ID)
+	err := client.RemoveImageExtended(image.ID, docker.RemoveImageOptions{
+		Force: true,
+	})
 	if err == nil {
 		logrus.Infoln("Removed image", image.ID, image.RepoTags)
 	} else {
@@ -361,7 +382,9 @@ func updateContainers(client DockerClient) error {
 }
 
 func doFreeSpace(client DockerClient, freeSpace, freeFiles uint64) error {
-	images, err := client.ListImages(docker.ListImagesOptions{})
+	images, err := client.ListImages(docker.ListImagesOptions{
+		All: true,
+	})
 	if err != nil {
 		logrus.Warningln("Failed to list images:", err)
 		return err
@@ -391,6 +414,7 @@ func doFreeSpace(client DockerClient, freeSpace, freeFiles uint64) error {
 
 		for idx, image := range images {
 			if isInternalImage(image) {
+				logrus.Infoln("Internal image protected", image.ID, image.RepoTags)
 				continue
 			}
 			if imageInfo, ok := imagesUsed[image.ID]; ok {
@@ -417,7 +441,7 @@ func doFreeSpace(client DockerClient, freeSpace, freeFiles uint64) error {
 			}
 		}
 
-		logrus.Debugln("doFreeCycle", bestScore, bestImageIndex, bestCacheIndex)
+		logrus.Infoln("doFreeCycle", bestScore, bestImageIndex, bestCacheIndex)
 
 		if bestImageIndex >= 0 {
 			lastError = removeImage(client, images[bestImageIndex])
@@ -464,17 +488,17 @@ func doCycle(client DockerClient, lowFreeSpace, freeSpace, lowFreeFiles, freeFil
 	}
 
 	if diskSpace.BytesFree < lowFreeSpace {
-		logrus.Warningln("Freeing disk space. The disk space is below the lower bound:", humanize.Bytes(diskSpace.BytesFree),
+		logrus.Infoln("Freeing disk space. The disk space is below the lower bound(", humanize.Bytes(lowFreeSpace), "):", humanize.Bytes(diskSpace.BytesFree),
 			"trying to free up to:", humanize.Bytes(freeSpace))
 	}
-	if diskSpace.FilesFree < lowFreeSpace {
-		logrus.Warningln("Freeing files count. The free file count is below the lower bound:", diskSpace.FilesFree,
+	if diskSpace.FilesFree < lowFreeFiles {
+		logrus.Infoln("Freeing files count. The free file count is below the lower bound(", lowFreeFiles, "):", diskSpace.FilesFree,
 			"trying to free up to:", freeFiles)
 	}
 
 	freeSpaceErr := doFreeSpace(client, freeSpace, freeFiles)
 	if freeSpaceErr != nil {
-		logrus.Warningln("Failed to free disk space:", freeSpaceErr)
+		logrus.Infoln("Failed to free disk space:", freeSpaceErr)
 	}
 
 	currentDiskSpace, err := client.DiskSpace(opts.MonitorPath)
@@ -505,7 +529,7 @@ func runCleanupTool(c *cli.Context) {
 		if dockerClient == nil || dockerClient.Ping() != nil {
 			dockerClient = nil
 
-			client, err := docker_helpers.Connect(dockerCredentials, dockerAPIVersion)
+			client, err := docker.NewClient(dockerClientEndpoint)
 			if err != nil {
 				logrus.Warningln("Failed to connect to daemon:", err)
 				time.Sleep(opts.RetryInterval)
@@ -533,7 +557,7 @@ func main() {
 	app.Version = fmt.Sprintf("%s (%s)", version, revision)
 	app.Author = "Kamil Trzciński"
 	app.Email = "ayufan@ayufan.eu"
-	cli_helpers.SetupLogLevelOptions(app)
+	//cli_helpers.SetupLogLevelOptions(app)
 	app.Flags = append(app.Flags, clihelpers.GetFlagsFromStruct(&dockerCredentials, "docker")...)
 	app.Flags = append(app.Flags, clihelpers.GetFlagsFromStruct(&opts)...)
 	app.Action = runCleanupTool

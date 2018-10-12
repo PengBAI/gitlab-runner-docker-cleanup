@@ -1,6 +1,16 @@
 ## GitLab Runner Docker Cleanup
 
-This is simple docker application that automatically garbage collects the GitLab Runner Caches and Images when running on low disk space.
+Project forked from [gitlab-org/gitlab-runner-docker-cleanup](https://gitlab.com/gitlab-org/gitlab-runner-docker-cleanup).
+
+This is simple docker application that automatically garbage collects the GitLab Runner Caches and Images when running on low disk space. 
+
+### New features:
+
+* Update go version to 1.9
+* Be able to define a protected internal images list in a file to prevent from removing, your builder image for example.
+* Support to remove multi-tag images
+* Update Dockerfile to respect PS docker policy
+
 
 ## How to run it?
 
@@ -18,8 +28,20 @@ docker run -d \
     -e USE_DF=1 \
     --restart always \
     -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /etc/gitlab_runner_docker_cleanup_internal_images:/etc/gitlab_runner_docker_cleanup_internal_images \
     --name=gitlab-runner-docker-cleanup \
-    quay.io/gitlab/gitlab-runner-docker-cleanup
+    registry-testing.kazan.atosworldline.com/kazan/awl-gitlab-runner-docker-cleanup:latest
+```
+
+example of /etc/gitlab_runner_docker_cleanup_internal_images
+
+```
+$ cat /etc/gitlab_runner_docker_cleanup_internal_images
+registry-testing.kazan.atosworldline.com/kazan/awl-kazan-builder:*
+registry.kazan.atosworldline.com/docker-reg/awl-transparent-proxy:latest
+registry-testing.kazan.atosworldline.com/kazan/awl-docker-builder-cli:*
+registry.kazan.atosworldline.com/kazan/awl-docker-builder-cli:*
+tutum/curl:alpine
 ```
 
 The above command will ensure to always have at least `10GB` of free disk space and at least `1M` of free files (i-nodes) on disk.
@@ -42,34 +64,4 @@ You can configure GitLab Runner Docker Cleanup with environment variables:
 | CHECK_INTERVAL            | 10s   | How often to check the disk space |
 | RETRY_INTERVAL            | 30s   | How long to wait before retrying in case of failure |
 | DEFAULT_TTL               | 1m    | Minimum time to preserve a newly downloaded images or created caches |
-
-## Automated build
-
-The image is automatically built by `quay.io`.
-To see a latest build status, go to: 
-
-## Development
-
-1. Install Go Runtime, the 1.5.x is preferred
-
-2. Download the sources with dependencies:
-
-```
-go get gitlab.com/gitlab-org/gitlab-runner-docker-cleanup
-```
-
-3. Modifying sources and run tests:
-
-```
-cd $GOPATH/src/gitlab.com/gitlab-org/gitlab-runner-docker-cleanup
-go test
-````
-
-## Author
-
-Kamil Trzciński
-
-## License
-
-MIT
-
+| ADDITIONAL_INTERNAL_IMAGES_FILE_PATH | /etc/gitlab_runner_docker_cleanup_internal_images | User defined images not to remove |

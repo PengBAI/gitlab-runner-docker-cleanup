@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-	"github.com/Sirupsen/logrus"
 	"github.com/dustin/go-humanize"
 	. "github.com/fsouza/go-dockerclient"
+	"github.com/sirupsen/logrus"
 	. "gopkg.in/check.v1"
 	"testing"
 	"time"
@@ -29,6 +29,20 @@ func (c *MockDockerClient) Ping() error {
 }
 
 func (c *MockDockerClient) RemoveImage(name string) error {
+	if c.error != nil {
+		return c.error
+	}
+	for _, image := range c.images {
+		if image.ID == name {
+			c.freeSpace += uint64(image.Size)
+			c.freeFiles += uint64(image.Size / 4096)
+		}
+	}
+	c.removedImages = append(c.removedImages, name)
+	return nil
+}
+
+func (c *MockDockerClient) RemoveImageExtended(name string, opts RemoveImageOptions) error {
 	if c.error != nil {
 		return c.error
 	}
