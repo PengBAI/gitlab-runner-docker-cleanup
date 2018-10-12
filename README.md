@@ -1,3 +1,5 @@
+[![Docker Hub](https://img.shields.io/badge/docker-ready-blue.svg)](https://hub.docker.com/r/pengbai/gitlab-runner-docker-cleanup/)
+
 ## GitLab Runner Docker Cleanup
 
 Project forked from [gitlab-org/gitlab-runner-docker-cleanup](https://gitlab.com/gitlab-org/gitlab-runner-docker-cleanup). Thanks to the original project owner.
