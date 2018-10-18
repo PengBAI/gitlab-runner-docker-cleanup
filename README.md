@@ -64,3 +64,38 @@ You can configure GitLab Runner Docker Cleanup with environment variables:
 | RETRY_INTERVAL            | 30s   | How long to wait before retrying in case of failure |
 | DEFAULT_TTL               | 1m    | Minimum time to preserve a newly downloaded images or created caches |
 | ADDITIONAL_INTERNAL_IMAGES_FILE_PATH | /etc/gitlab_runner_docker_cleanup_internal_images | User defined images not to remove |
+
+## Automated build
+
+The image is automatically built by `quay.io`.
+	
+To see a latest build status, go to: 
+	
+## Development
+
+1. Install Go Runtime, the 1.5.x is preferred
+
+2. Download the sources with dependencies:
+
+```
+go get gitlab.com/gitlab-org/gitlab-runner-docker-cleanup
+
+```
+
+3. Modifying sources and run tests:
+
+```
+cd $GOPATH/src/gitlab.com/gitlab-org/gitlab-runner-docker-cleanup
+
+go test
+````
+## Author
+
+Kamil Trzciński
+
+### Controbutor
+Peng BAI
+	
+## License
+
+MIT
