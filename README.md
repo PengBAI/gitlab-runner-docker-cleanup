@@ -67,7 +67,7 @@ You can configure GitLab Runner Docker Cleanup with environment variables:
 
 ## Automated build
 
-The image is automatically built by `quay.io`.
+The image is automatically built by `hub.docker.com`.
 	
 To see a latest build status, go to: 
 	
@@ -93,7 +93,7 @@ go test
 
 Kamil Trzciński
 
-### Controbutor
+### Contributor
 Peng BAI
 	
 ## License
