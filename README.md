@@ -73,7 +73,7 @@ To see a latest build status, go to:
 	
 ## Development
 
-1. Install Go Runtime, the 1.5.x is preferred
+1. Install Go Runtime, the 1.9.x is preferred
 
 2. Download the sources with dependencies:
 
